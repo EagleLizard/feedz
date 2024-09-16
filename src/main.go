@@ -38,11 +38,61 @@ func decode() {
 		log.Fatal(err)
 	}
 	d := xml.NewDecoder(r)
-	t, tokenErr := d.Token()
-	if tokenErr != nil {
-		log.Fatal(tokenErr)
+	/*
+		Map the full xmlns string to its prefix for convenience.
+			Required because of how std encoding/xml returns tokens
+			when using Decoder.
+		See: https://pkg.go.dev/encoding/xml#Name
+	*/
+	nsMap := make(map[string]string)
+
+	for {
+		t, tokenErr := d.Token()
+		if tokenErr != nil {
+			if tokenErr == io.EOF {
+				break
+			}
+			log.Fatal(tokenErr)
+		}
+		switch t := t.(type) {
+		case xml.StartElement:
+			fmt.Println("StartElement")
+			fmt.Printf("%+v\n", t.Name)
+			if len(t.Name.Space) > 0 {
+				nsPrefix := nsMap[t.Name.Space]
+				fmt.Println(t.Name.Space)
+				fmt.Println(nsPrefix)
+			}
+			for _, attr := range t.Attr {
+				// fmt.Printf("Name: %+v\n", attr.Name)
+				// fmt.Printf("Value: %v\n", attr.Value)
+				if attr.Name.Space == "xmlns" {
+					/*
+						TODO: remove namespaces from map when an element's end
+							element is encountered that defined the space (when it
+							falls out of scope)
+					*/
+					nsMap[attr.Value] = attr.Name.Local
+					// fmt.Printf("xmlns:%s=\"%s\"\n", attr.Name.Local, attr.Value)
+				}
+			}
+			// return
+		case xml.EndElement:
+			// fmt.Println("EndElement")
+			// fmt.Printf("%+v\n", t.Name)
+		case xml.CharData:
+			// fmt.Println("CharData")
+		case xml.Comment:
+			// fmt.Println("Comment")
+		case xml.ProcInst:
+			// fmt.Println("ProcInst")
+			// fmt.Printf("target: %s\n", t.Target)
+			// fmt.Printf("inst: %s\n", t.Inst)
+		case xml.Directive:
+			// fmt.Println("Directive")
+		}
 	}
-	fmt.Printf("%+v\n", t)
+	// fmt.Printf("%+v\n", t)
 }
 
 func fetchFeeds() {
