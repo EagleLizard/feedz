@@ -24,13 +24,21 @@ func main() {
 	case "decode":
 		fallthrough
 	case "d":
-		decode()
+		decodeCmd()
 	default:
 		fmt.Printf("Cmd: %s\n", parsedArv.Cmd)
 	}
 }
 
-func decode() {
+type rssParseStateEnum int
+
+const (
+	initRss rssParseStateEnum = iota
+	rssTag
+	rssChannel
+)
+
+func decodeCmd() {
 	feedFilePath := constants.TestFeedFilePath
 	fmt.Printf("Decoding: %s\n", feedFilePath)
 	r, err := os.Open(feedFilePath)
@@ -45,7 +53,8 @@ func decode() {
 		See: https://pkg.go.dev/encoding/xml#Name
 	*/
 	nsMap := make(map[string]string)
-
+	tagStack := []xml.StartElement{}
+	rssParseState := initRss
 	for {
 		t, tokenErr := d.Token()
 		if tokenErr != nil {
@@ -56,16 +65,7 @@ func decode() {
 		}
 		switch t := t.(type) {
 		case xml.StartElement:
-			fmt.Println("StartElement")
-			fmt.Printf("%+v\n", t.Name)
-			if len(t.Name.Space) > 0 {
-				nsPrefix := nsMap[t.Name.Space]
-				fmt.Println(t.Name.Space)
-				fmt.Println(nsPrefix)
-			}
 			for _, attr := range t.Attr {
-				// fmt.Printf("Name: %+v\n", attr.Name)
-				// fmt.Printf("Value: %v\n", attr.Value)
 				if attr.Name.Space == "xmlns" {
 					/*
 						TODO: remove namespaces from map when an element's end
@@ -73,21 +73,65 @@ func decode() {
 							falls out of scope)
 					*/
 					nsMap[attr.Value] = attr.Name.Local
-					// fmt.Printf("xmlns:%s=\"%s\"\n", attr.Name.Local, attr.Value)
+				} else {
+					switch rssParseState {
+					case rssTag:
+						fmt.Printf("%+v\n", attr)
+						if attr.Name.Local == "version" {
+							fmt.Printf("version: %s\n", attr.Value)
+						} else {
+							log.Fatal(fmt.Errorf("invalid rss attribute: %+v", attr))
+						}
+					}
 				}
 			}
+			switch rssParseState {
+			case initRss:
+				fmt.Printf("%+v\n", t)
+				return
+			}
+			tagStack = append(tagStack, t)
 			// return
 		case xml.EndElement:
-			// fmt.Println("EndElement")
+			if len(tagStack) > 0 {
+				topTag := tagStack[len(tagStack)-1]
+				if topTag.Name.Space == t.Name.Space &&
+					topTag.Name.Local == t.Name.Local {
+					tagStack = tagStack[:len(tagStack)-1]
+					if nsMap[topTag.Name.Space] != "" {
+						fmt.Printf("%+v\n", nsMap[topTag.Name.Space])
+						// fmt.Printf("%+v\n", topTag)
+					}
+				}
+			}
+			fmt.Println("EndElement")
 			// fmt.Printf("%+v\n", t.Name)
 		case xml.CharData:
 			// fmt.Println("CharData")
+			// fmt.Printf("%s\n", t)
+			switch rssParseState {
+			case initRss:
+				/*
+					should be whitespace, do nothing
+				*/
+			}
 		case xml.Comment:
 			// fmt.Println("Comment")
 		case xml.ProcInst:
 			// fmt.Println("ProcInst")
+			// fmt.Printf("%+v\n", t)
+			// fmt.Printf("Inst: %s", t.Inst)
 			// fmt.Printf("target: %s\n", t.Target)
-			// fmt.Printf("inst: %s\n", t.Inst)
+			/*
+				should be something like:
+					version="1.0" encoding="UTF-8"
+			*/
+			switch rssParseState {
+			case initRss:
+				rssParseState = rssTag
+			default:
+				log.Fatalf("invalid ProcInst: %+v", t)
+			}
 		case xml.Directive:
 			// fmt.Println("Directive")
 		}
