@@ -35,8 +35,26 @@ type rssParseStateEnum int
 const (
 	initRss rssParseStateEnum = iota
 	rssTag
-	rssChannel
+	rssChannelTag
+	rssChannelInner
+	rssChannelItem
+	rssItemTitle
+	rssItemDesc
 )
+
+/*
+	An item must contain a title OR a description
+		all other elements are optional
+	Child elements:
+		title: cdata
+		description: cdata
+	see: https://www.rssboard.org/rss-profile#element-channel-item
+*/
+
+type RssItem struct {
+	title       string
+	description string
+}
 
 func decodeCmd() {
 	feedFilePath := constants.TestFeedFilePath
@@ -55,6 +73,19 @@ func decodeCmd() {
 	nsMap := make(map[string]string)
 	tagStack := []xml.StartElement{}
 	rssParseState := initRss
+
+	rssItems := []RssItem{}
+	var currRssItem *RssItem
+
+	getTagStr := func(el xml.StartElement) string {
+		nsStr := nsMap[el.Name.Space]
+		var tagPrefix string
+		if len(nsStr) > 0 {
+			tagPrefix = nsStr + ":"
+		}
+		return tagPrefix + el.Name.Local
+	}
+
 	for {
 		t, tokenErr := d.Token()
 		if tokenErr != nil {
@@ -73,55 +104,106 @@ func decodeCmd() {
 							falls out of scope)
 					*/
 					nsMap[attr.Value] = attr.Name.Local
-				} else {
-					switch rssParseState {
-					case rssTag:
-						fmt.Printf("%+v\n", attr)
-						if attr.Name.Local == "version" {
-							fmt.Printf("version: %s\n", attr.Value)
-						} else {
-							log.Fatal(fmt.Errorf("invalid rss attribute: %+v", attr))
-						}
-					}
 				}
 			}
 			switch rssParseState {
-			case initRss:
-				fmt.Printf("%+v\n", t)
-				return
-			}
-			tagStack = append(tagStack, t)
-			// return
-		case xml.EndElement:
-			if len(tagStack) > 0 {
-				topTag := tagStack[len(tagStack)-1]
-				if topTag.Name.Space == t.Name.Space &&
-					topTag.Name.Local == t.Name.Local {
-					tagStack = tagStack[:len(tagStack)-1]
-					if nsMap[topTag.Name.Space] != "" {
-						fmt.Printf("%+v\n", nsMap[topTag.Name.Space])
-						// fmt.Printf("%+v\n", topTag)
+			case rssTag:
+				if t.Name.Local != "rss" {
+					log.Fatalf("invalid rss tag: %+v", t)
+				}
+				rssParseState = rssChannelTag
+			case rssChannelTag:
+				if t.Name.Local != "channel" {
+					log.Fatalf("%v: invalid StartElement (expected channel): %+v", rssParseState, t)
+				}
+				rssParseState = rssChannelInner
+			case rssChannelInner:
+				if t.Name.Local == "item" {
+					if currRssItem != nil {
+						panic(fmt.Sprintf("unexpected item open tag. currRssItem: %+v, currTag: %+v", currRssItem, t))
+						// log.Fatalf("unexpected item open tag. currRssItem: %+v, currTag: %+v", currRssItem, t)
+					}
+					currRssItem = &RssItem{}
+					rssParseState = rssChannelItem
+				}
+			case rssChannelItem:
+				if len(nsMap[t.Name.Space]) > 0 {
+					/*
+						TODO: do something with namespace elements
+					*/
+				} else {
+					switch t.Name.Local {
+					case "title":
+						rssParseState = rssItemTitle
+					case "description":
+						rssParseState = rssItemDesc
 					}
 				}
 			}
-			fmt.Println("EndElement")
-			// fmt.Printf("%+v\n", t.Name)
+			tagStack = append(tagStack, t)
+
+		case xml.EndElement:
+			var startEl xml.StartElement
+			if len(tagStack) > 0 {
+				startEl = tagStack[len(tagStack)-1]
+				if startEl.Name.Space == t.Name.Space &&
+					startEl.Name.Local == t.Name.Local {
+					tagStack = tagStack[:len(tagStack)-1]
+				}
+			} else {
+				panic("empty tagStack (should be unreachable code)")
+			}
+
+			var topEl *xml.StartElement
+			if len(tagStack) > 0 {
+				topEl = &tagStack[len(tagStack)-1]
+			}
+			switch rssParseState {
+			case rssChannelInner:
+				tagStr := getTagStr(startEl)
+				fmt.Print("\n")
+				fmt.Printf("%s\n", tagStr)
+				fmt.Printf("%+v\n", topEl)
+				if t.Name.Local == "item" {
+					return
+				}
+			case rssChannelItem:
+				switch startEl.Name.Local {
+				case "item":
+					if currRssItem == nil {
+						panic(fmt.Sprintf("unexpected nil currRssItem, end tag: %+v\n", t))
+					}
+					rssItems = append(rssItems, *currRssItem)
+					currRssItem = nil
+					rssParseState = rssChannelInner
+				}
+			case rssItemTitle:
+				fallthrough
+			case rssItemDesc:
+				rssParseState = rssChannelItem
+			default:
+				log.Fatalf("%v: invalid EndElement: %+v", rssParseState, t)
+			}
 		case xml.CharData:
-			// fmt.Println("CharData")
-			// fmt.Printf("%s\n", t)
 			switch rssParseState {
 			case initRss:
 				/*
 					should be whitespace, do nothing
 				*/
+			case rssItemTitle:
+				currCDataStr := string(t)
+				if len(strings.TrimSpace(currCDataStr)) > 0 {
+					currRssItem.title += currCDataStr
+				}
+			case rssItemDesc:
+				currCDataStr := string(t)
+				if len(strings.TrimSpace(currCDataStr)) > 0 {
+					currRssItem.description += currCDataStr
+				}
 			}
 		case xml.Comment:
-			// fmt.Println("Comment")
+			fmt.Println("Comment")
 		case xml.ProcInst:
-			// fmt.Println("ProcInst")
-			// fmt.Printf("%+v\n", t)
-			// fmt.Printf("Inst: %s", t.Inst)
-			// fmt.Printf("target: %s\n", t.Target)
 			/*
 				should be something like:
 					version="1.0" encoding="UTF-8"
@@ -136,7 +218,8 @@ func decodeCmd() {
 			// fmt.Println("Directive")
 		}
 	}
-	// fmt.Printf("%+v\n", t)
+
+	fmt.Printf("len(rssItems): %d\n", len(rssItems))
 }
 
 func fetchFeeds() {

@@ -6,6 +6,6 @@ build:
 run: build
 	./$(GO_BIN_NAME)
 watch: build
-	fswatch -r ./src | xargs -n1 -I{} make build
+	fswatch -l 0.125 -r ./src | xargs -n1 -I{} make build
 watch-rs:
 	cargo watch -x build

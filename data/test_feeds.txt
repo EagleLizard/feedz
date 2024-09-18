@@ -1,2 +1,6 @@
 
 https://feed.syntax.fm/
+https://moxie.foxnews.com/google-publisher/latest.xml
+https://moxie.foxnews.com/google-publisher/us.xml
+https://moxie.foxnews.com/google-publisher/world.xml
+
